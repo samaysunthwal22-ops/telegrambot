@@ -2,9 +2,9 @@ const express = require("express");
 const https = require("https");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
@@ -18,76 +18,19 @@ function sendMessage(text){
 }
 
 
-// create fortnite listing
-function createListing(title,price){
+// telegram webhook
+app.post("/webhooks/telegram",(req,res)=>{
 
-  const data = JSON.stringify({
-    title:title,
-    price:price,
-    login:"sample_login",
-    password:"sample_password",
-    manual:false,
-    description:"Fortnite stacked account",
-    platform:"PC",
+  const msg = req.body.message?.text;
 
-    account_data:{
-      account_level:100,
-      skins_count:20,
-      v_bucks_count:0
-    }
+  if(!msg){
+    res.sendStatus(200);
+    return;
+  }
 
-  });
+  if(msg.startsWith("/list")){
 
-  const options = {
-    hostname:"api.gameboost.com",
-    path:"/v2/account-offers",
-    method:"POST",
-    headers:{
-      "Authorization":`Bearer ${GAMEBOOST_API_KEY}`,
-      "Content-Type":"application/json",
-      "Content-Length":data.length
-    }
-  };
-
-  const req = https.request(options,res=>{
-
-    let body="";
-
-    res.on("data",chunk=>{
-      body+=chunk;
-    });
-
-    res.on("end",()=>{
-      sendMessage("✅ Listing created on GameBoost");
-    });
-
-  });
-
-  req.write(data);
-  req.end();
-
-}
-
-
-// telegram command webhook
-app.post(`/bot${BOT_TOKEN}`, (req,res)=>{
-
-  const message = req.body.message?.text;
-
-  if(!message) return res.sendStatus(200);
-
-
-  // create listing command
-  if(message.startsWith("/list")){
-
-    const parts = message.split(" ");
-
-    const title = parts[1];
-    const price = parseFloat(parts[2]);
-
-    createListing(title,price);
-
-    sendMessage("📦 Creating Fortnite listing...");
+    sendMessage("📦 Creating listing...");
 
   }
 
@@ -136,16 +79,12 @@ Amount: $${event?.data?.price}`;
 
   sendMessage(message);
 
-  res.status(200).send("ok");
+  res.sendStatus(200);
 
 });
 
 
-// start server
 app.listen(PORT,()=>{
-
-  console.log("Bot running");
-
+  console.log("Server running");
   sendMessage("🚀 Bot deployed successfully");
-
 });
