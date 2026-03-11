@@ -37,23 +37,40 @@ app.get("/health", (req, res) => {
 
 // GameBoost webhook endpoint
 app.post("/webhooks/gameboost", (req, res) => {
-  console.log("GameBoost event received:", req.body);
 
   const event = req.body;
 
-  let message = "📦 GameBoost Event Received";
+  console.log("GameBoost Event:", event);
 
-  if (event.type) {
-    message = `📦 GameBoost Event\nType: ${event.type}`;
+  let message = "📦 GameBoost Event";
+
+  if(event.type === "order.created"){
+    message =
+`🛒 NEW ORDER
+
+Buyer: ${event.data.buyer_username}
+Product: ${event.data.title}
+Price: $${event.data.price}`;
+  }
+
+  if(event.type === "message.created"){
+    message =
+`💬 NEW BUYER MESSAGE
+
+From: ${event.data.sender}
+Message: ${event.data.message}`;
+  }
+
+  if(event.type === "order.completed"){
+    message =
+`💰 ORDER COMPLETED
+
+Product: ${event.data.title}
+Amount: $${event.data.price}`;
   }
 
   sendMessage(message);
 
   res.status(200).send("ok");
-});
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  sendMessage("🚀 Bot deployed successfully on Render!");
 });
