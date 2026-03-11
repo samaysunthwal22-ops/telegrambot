@@ -28,6 +28,49 @@ function sendMessage(text) {
     });
 }
 
+// Generic GET request to GameBoost
+function gameboostGet(path, callback) {
+  const apiKey = process.env.GAMEBOOST_API_KEY;
+
+  if (!apiKey) {
+    callback(new Error("Missing GAMEBOOST_API_KEY"), null);
+    return;
+  }
+
+  const options = {
+    hostname: "api.gameboost.com",
+    path: path,
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+  };
+
+  const request = https.request(options, (response) => {
+    let data = "";
+
+    response.on("data", (chunk) => {
+      data += chunk;
+    });
+
+    response.on("end", () => {
+      try {
+        const parsed = JSON.parse(data);
+        callback(null, parsed);
+      } catch (error) {
+        callback(new Error("Invalid JSON response: " + data), null);
+      }
+    });
+  });
+
+  request.on("error", (error) => {
+    callback(error, null);
+  });
+
+  request.end();
+}
+
 // Home route
 app.get("/", (req, res) => {
   res.send("Telegram bot is running");
@@ -36,6 +79,18 @@ app.get("/", (req, res) => {
 // Health check
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
+});
+
+// Get Fortnite account offer template
+app.get("/gameboost/template/fortnite", (req, res) => {
+  gameboostGet("/v2/account-offers/templates/fortnite", (error, data) => {
+    if (error) {
+      console.log("Template fetch error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json(data);
+  });
 });
 
 // GameBoost webhook
