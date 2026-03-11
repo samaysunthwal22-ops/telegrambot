@@ -18,25 +18,91 @@ function sendMessage(text){
 }
 
 
+// create fortnite listing
+function createListing(title, price, skins){
+
+  const data = JSON.stringify({
+    title: title,
+    price: parseFloat(price),
+
+    login: "account_login",
+    password: "account_password",
+
+    description: `Fortnite account with ${skins} skins`,
+
+    platform: "PC",
+
+    account_data:{
+      skins_count: parseInt(skins),
+      account_level: 100,
+      v_bucks_count: 0
+    }
+  });
+
+
+  const options = {
+    hostname:"api.gameboost.com",
+    path:"/v2/account-offers",
+    method:"POST",
+    headers:{
+      "Authorization":`Bearer ${GAMEBOOST_API_KEY}`,
+      "Content-Type":"application/json",
+      "Content-Length":data.length
+    }
+  };
+
+
+  const req = https.request(options,res=>{
+
+    let body="";
+
+    res.on("data",chunk=>{
+      body+=chunk;
+    });
+
+    res.on("end",()=>{
+      sendMessage("✅ Listing sent to GameBoost");
+    });
+
+  });
+
+  req.write(data);
+  req.end();
+
+}
+
+
+
 // telegram webhook
 app.post("/webhooks/telegram",(req,res)=>{
 
-  const msg = req.body.message?.text;
+  const text = req.body.message?.text;
 
-  if(!msg){
+  if(!text){
     res.sendStatus(200);
     return;
   }
 
-  if(msg.startsWith("/list")){
+
+  if(text.startsWith("/list")){
+
+    const parts = text.split(" ");
+
+    const title = parts[1];
+    const price = parts[2];
+    const skins = parts[3];
 
     sendMessage("📦 Creating listing...");
 
+    createListing(title,price,skins);
+
   }
+
 
   res.sendStatus(200);
 
 });
+
 
 
 // gameboost webhook
@@ -85,6 +151,9 @@ Amount: $${event?.data?.price}`;
 
 
 app.listen(PORT,()=>{
+
   console.log("Server running");
+
   sendMessage("🚀 Bot deployed successfully");
+
 });
