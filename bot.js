@@ -1,5 +1,6 @@
 const express = require("express");
 const https = require("https");
+const querystring = require("querystring");
 
 const app = express();
 app.use(express.json());
@@ -9,6 +10,7 @@ const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const GAMEBOOST_API_KEY = process.env.GAMEBOOST_API_KEY;
+const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 
 const sessions = {};
 
@@ -56,6 +58,7 @@ function getSession(chatId) {
       raikaTitle: "",
       raikaStatsText: "",
       photos: [],
+      imageUrls: [],
       email: "",
       password: "",
       pending: null,
@@ -116,7 +119,6 @@ function buildGeneratedTitle(session) {
   }
 
   const highlights = [];
-
   const knownNames = [
     "IKONIK",
     "Glow",
@@ -210,6 +212,143 @@ function buildDump(session) {
   return parts.join(" ");
 }
 
+// ---------- TELEGRAM FILE -> IMGBB ----------
+
+function getTelegramFilePath(fileId, callback) {
+  const options = {
+    hostname: "api.telegram.org",
+    path: `/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`,
+    method: "GET",
+  };
+
+  const req = https.request(options, (res) => {
+    let body = "";
+    res.on("data", (chunk) => (body += chunk));
+    res.on("end", () => {
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed.ok && parsed.result && parsed.result.file_path) {
+          callback(null, parsed.result.file_path);
+        } else {
+          callback(new Error("Could not get Telegram file path"), null);
+        }
+      } catch (err) {
+        callback(err, null);
+      }
+    });
+  });
+
+  req.on("error", (err) => callback(err, null));
+  req.end();
+}
+
+function downloadTelegramFileAsBase64(filePath, callback) {
+  const options = {
+    hostname: "api.telegram.org",
+    path: `/file/bot${BOT_TOKEN}/${filePath}`,
+    method: "GET",
+  };
+
+  const req = https.request(options, (res) => {
+    const chunks = [];
+
+    res.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+
+    res.on("end", () => {
+      try {
+        const buffer = Buffer.concat(chunks);
+        const base64 = buffer.toString("base64");
+        callback(null, base64);
+      } catch (err) {
+        callback(err, null);
+      }
+    });
+  });
+
+  req.on("error", (err) => callback(err, null));
+  req.end();
+}
+
+function uploadBase64ToImgBB(base64Image, callback) {
+  const postData = querystring.stringify({
+    key: IMGBB_API_KEY,
+    image: base64Image,
+  });
+
+  const options = {
+    hostname: "api.imgbb.com",
+    path: "/1/upload",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Length": Buffer.byteLength(postData),
+    },
+  };
+
+  const req = https.request(options, (res) => {
+    let body = "";
+    res.on("data", (chunk) => (body += chunk));
+    res.on("end", () => {
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed && parsed.success && parsed.data && parsed.data.url) {
+          callback(null, parsed.data.url);
+        } else {
+          callback(new Error("ImgBB upload failed"), null);
+        }
+      } catch (err) {
+        callback(err, null);
+      }
+    });
+  });
+
+  req.on("error", (err) => callback(err, null));
+  req.write(postData);
+  req.end();
+}
+
+function processTelegramPhoto(fileId, chatId, session) {
+  if (!IMGBB_API_KEY) {
+    sendMessage("❌ Missing IMGBB_API_KEY in Render environment.", chatId);
+    return;
+  }
+
+  sendMessage("🖼 Uploading screenshot...", chatId);
+
+  getTelegramFilePath(fileId, (err, filePath) => {
+    if (err) {
+      sendMessage(`❌ Failed to get Telegram file path: ${err.message}`, chatId);
+      return;
+    }
+
+    downloadTelegramFileAsBase64(filePath, (err2, base64Image) => {
+      if (err2) {
+        sendMessage(`❌ Failed to download Telegram image: ${err2.message}`, chatId);
+        return;
+      }
+
+      uploadBase64ToImgBB(base64Image, (err3, imageUrl) => {
+        if (err3) {
+          sendMessage(`❌ ImgBB upload failed: ${err3.message}`, chatId);
+          return;
+        }
+
+        session.photos.push(fileId);
+        session.imageUrls.push(imageUrl);
+
+        sendMessage(
+          `✅ Screenshot uploaded.\nStored screenshots: ${session.imageUrls.length}`,
+          chatId
+        );
+      });
+    });
+  });
+}
+
+// ---------- GAMEBOOST LISTING ----------
+
 function createGameBoostListing(session, price, chatId) {
   const platform = extractPlatform(session.raikaTitle);
   const vbucks = extractVBucks(session.raikaTitle);
@@ -229,7 +368,9 @@ function createGameBoostListing(session, price, chatId) {
     },
     description: buildDescription(session),
     dump: buildDump(session),
-    delivery_instructions: "Login details will be delivered after purchase. Please secure the account immediately after receiving it.",
+    delivery_instructions:
+      "Login details will be delivered after purchase. Please secure the account immediately after receiving it.",
+    image_urls: session.imageUrls,
     account_data: {
       platform,
       linkable_platforms: ["PC", "PlayStation", "Xbox", "Android", "iOS", "Switch"],
@@ -284,7 +425,7 @@ ${payload.title}
 
 Price: $${price}
 Platform: ${platform}
-Photos stored in bot: ${session.photos.length}
+Uploaded image URLs: ${session.imageUrls.length}
 
 GameBoost Response:
 ${JSON.stringify(parsed).slice(0, 1200)}`,
@@ -324,11 +465,9 @@ app.post("/webhooks/telegram", (req, res) => {
 
   const session = getSession(chatId);
 
-  // store photos
   if (photo && photo.length) {
     const largest = photo[photo.length - 1];
-    session.photos.push(largest.file_id);
-    sendMessage(`🖼 Screenshot saved. Total screenshots stored: ${session.photos.length}`, chatId);
+    processTelegramPhoto(largest.file_id, chatId, session);
     return res.sendStatus(200);
   }
 
@@ -336,7 +475,6 @@ app.post("/webhooks/telegram", (req, res) => {
     return res.sendStatus(200);
   }
 
-  // /start
   if (text === "/start") {
     sendMessage(
       `🚀 GameBoost Seller Bot Ready
@@ -358,12 +496,12 @@ Commands:
     return res.sendStatus(200);
   }
 
-  // /reset
   if (text === "/reset") {
     sessions[chatId] = {
       raikaTitle: "",
       raikaStatsText: "",
       photos: [],
+      imageUrls: [],
       email: "",
       password: "",
       pending: null,
@@ -373,7 +511,6 @@ Commands:
     return res.sendStatus(200);
   }
 
-  // /show
   if (text === "/show") {
     sendMessage(
       `📦 Current Draft
@@ -390,6 +527,9 @@ ${session.password ? "Saved" : "Not set"}
 Photos stored:
 ${session.photos.length}
 
+Uploaded image URLs:
+${session.imageUrls.length}
+
 Parsed stats:
 ${JSON.stringify(session.parsed, null, 2)}`,
       chatId
@@ -397,7 +537,6 @@ ${JSON.stringify(session.parsed, null, 2)}`,
     return res.sendStatus(200);
   }
 
-  // /pass flow
   if (text === "/pass") {
     session.pending = "awaiting_email";
     sendMessage("📧 Please send email/login", chatId);
@@ -418,7 +557,6 @@ ${JSON.stringify(session.parsed, null, 2)}`,
     return res.sendStatus(200);
   }
 
-  // /post flow
   if (text === "/post") {
     if (!session.raikaStatsText) {
       sendMessage("❌ First send Raika stats text.", chatId);
@@ -447,14 +585,12 @@ ${JSON.stringify(session.parsed, null, 2)}`,
     return res.sendStatus(200);
   }
 
-  // auto-detect Raika title
   if (text.startsWith("[PC]") || text.startsWith("[Xbox]") || text.startsWith("[PlayStation]")) {
     session.raikaTitle = text.trim();
     sendMessage("🏷 Raika title saved.", chatId);
     return res.sendStatus(200);
   }
 
-  // auto-detect Raika stats block
   if (text.includes("Outfits:") && text.includes("Backpacks:") && text.includes("Pickaxes:")) {
     session.raikaStatsText = text;
     session.parsed = parseRaikaStats(text);
@@ -489,8 +625,7 @@ app.post("/webhooks/gameboost", (req, res) => {
   let message = "📦 GameBoost Event";
 
   if (event.type === "order.created") {
-    message =
-`🛒 NEW ORDER
+    message = `🛒 NEW ORDER
 
 Buyer: ${event?.data?.buyer_username || "Unknown"}
 Product: ${event?.data?.title || "Unknown"}
@@ -498,16 +633,14 @@ Price: $${event?.data?.price || "Unknown"}`;
   }
 
   if (event.type === "message.created") {
-    message =
-`💬 BUYER MESSAGE
+    message = `💬 BUYER MESSAGE
 
 From: ${event?.data?.sender || "Unknown"}
 Message: ${event?.data?.message || "No message text"}`;
   }
 
   if (event.type === "order.completed") {
-    message =
-`💰 ORDER COMPLETED
+    message = `💰 ORDER COMPLETED
 
 Product: ${event?.data?.title || "Unknown"}
 Amount: $${event?.data?.price || "Unknown"}`;
