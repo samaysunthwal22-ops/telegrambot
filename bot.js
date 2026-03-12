@@ -1,3 +1,18 @@
+const { Client, GatewayIntentBits } = require("discord.js");
+
+const { aiSupportReply } = require("./aiSupport");
+const { isEscalationMessage } = require("./escalation");
+const { activeConversations } = require("./convoManager");
+const {
+  disableAI,
+  escalate,
+  getState,
+  hasAIHandled,
+  markAIHandled,
+  hasWelcomed,
+  markWelcomed
+} = require("./orderState");
+
 const express = require("express");
 const https = require("https");
 const querystring = require("querystring");
@@ -11,6 +26,9 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 const GAMEBOOST_API_KEY = process.env.GAMEBOOST_API_KEY;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
+
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
 const AUTO_REPLY_TEXT =
   "❤️ Thanks for buying from us! If you need any help, just message here — I will help you within seconds ❤️";
@@ -521,6 +539,13 @@ app.post("/webhooks/telegram", (req, res) => {
   }
 
   if (!text) return res.sendStatus(200);
+  // Conversation mode
+if (activeConversations[chatId] && !text.startsWith("/")) {
+  const orderId = activeConversations[chatId];
+  disableAI(orderId);
+  sendOrderMessage(orderId, text, chatId);
+  return res.sendStatus(200);
+}
 
   if (text === "/start") {
     sendMessage(
@@ -685,7 +710,44 @@ ${JSON.stringify(session.parsed, null, 2)}`,
     }
     getOrderMessages(orderId, chatId);
     return res.sendStatus(200);
+  } // Start conversation mode
+if (text.startsWith("/convo ")) {
+  const orderId = text.split(" ")[1];
+
+  if (!orderId) {
+    sendMessage("❌ Usage: /convo ORDER_ID", chatId);
+    return res.sendStatus(200);
   }
+
+  activeConversations[chatId] = String(orderId);
+  disableAI(orderId);
+
+  sendMessage(
+    `✅ Conversation mode started for order ${orderId}
+
+Now every normal message you send will go directly to the buyer.
+Use /convoend to stop.`,
+    chatId
+  );
+
+  getOrderMessages(orderId, chatId);
+  return res.sendStatus(200);
+}
+
+// End conversation mode
+if (text === "/convoend") {
+  const active = activeConversations[chatId];
+
+  if (!active) {
+    sendMessage("ℹ️ No active conversation mode.", chatId);
+    return res.sendStatus(200);
+  }
+
+  delete activeConversations[chatId];
+
+  sendMessage(`🛑 Conversation mode ended for order ${active}`, chatId);
+  return res.sendStatus(200);
+}
 
   if (
     text.startsWith("[PC]") ||
@@ -809,6 +871,119 @@ ${message.content}`;
 });
 
 discordClient.login(process.env.DISCORD_BOT_TOKEN);
+// ---------- DISCORD LISTENER ----------
+
+function extractOrderIdFromDiscordText(text) {
+  if (!text) return null;
+
+  const patterns = [
+    /order id[:# ]+(\d+)/i,
+    /order[:# ]+(\d+)/i,
+    /#(\d{4,})/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1];
+  }
+
+  return null;
+}
+
+function extractBuyerMessageFromDiscordText(text) {
+  if (!text) return "";
+
+  const messageMatch = text.match(/message[: ]+([\s\S]*)/i);
+  if (messageMatch && messageMatch[1]) {
+    return messageMatch[1].trim();
+  }
+
+  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+  return lines.length ? lines[lines.length - 1] : text;
+}
+
+const discordClient = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
+});
+
+discordClient.on("ready", () => {
+  sendMessage("🤖 Discord bridge connected successfully.");
+});
+
+discordClient.on("messageCreate", (message) => {
+
+  if (message.author.bot) return;
+  if (DISCORD_CHANNEL_ID && message.channel.id !== DISCORD_CHANNEL_ID) return;
+
+  const content = message.content || "";
+
+  if (!content) return;
+
+  sendMessage(`📦 GameBoost Discord Update
+
+${content}`);
+
+  const orderId = extractOrderIdFromDiscordText(content);
+
+  if (!orderId) return;
+
+  const orderIdStr = String(orderId);
+
+  if (/new order|order created|purchase/i.test(content) && !hasWelcomed(orderIdStr)) {
+
+    markWelcomed(orderIdStr);
+
+    sendOrderMessage(orderIdStr, AUTO_REPLY_TEXT);
+
+    sendMessage(`🤖 Welcome message sent to order ${orderIdStr}`);
+
+    return;
+  }
+
+  if (/buyer message|message:/i.test(content)) {
+
+    const buyerMessage = extractBuyerMessageFromDiscordText(content);
+
+    if (getState(orderIdStr) === "SELLER") return;
+
+    if (isEscalationMessage(buyerMessage)) {
+
+      escalate(orderIdStr);
+
+      sendMessage(`⚠️ ESCALATION REQUIRED
+
+Order ID: ${orderIdStr}
+
+Buyer message:
+${buyerMessage}
+
+Seller attention required.`);
+
+      return;
+    }
+
+    if (!hasAIHandled(orderIdStr)) {
+
+      const aiReply = aiSupportReply(orderIdStr, buyerMessage);
+
+      if (aiReply) {
+
+        markAIHandled(orderIdStr);
+
+        sendOrderMessage(orderIdStr, aiReply);
+
+        sendMessage(`🤖 AI replied to order ${orderIdStr}`);
+      }
+    }
+  }
+
+});
+
+discordClient.login(DISCORD_BOT_TOKEN);
 
 // ---------- ROOT ----------
 
