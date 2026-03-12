@@ -1,24 +1,27 @@
 function aiSupportReply(orderId, message) {
   const msg = (message || "").toLowerCase();
 
-  if (msg.includes("screenshot")⠵⠺⠟⠺⠟⠵⠵⠞⠺⠵⠟⠟⠵⠵⠟⠞⠞⠟⠟⠺⠺⠺⠺⠵⠟msg.includes("items included")) {
+  if (
+    msg.includes("screenshot") ||
+    msg.includes("screenshots") ||
+    msg.includes("skins") ||
+    msg.includes("items included")
+  ) {
     return `Yes 👍
 
 All skins and items included are visible in the screenshots provided in the listing.
 
-If you need any additional screenshots just let me know.`;
+If you need any additional screenshots, just let me know.`;
   }
 
-  if (msg.includes("login") || msg.includes("log in")) {
+  if (msg.includes("login")⠞⠞⠵⠵⠺⠵⠺⠟⠺⠞⠟⠺⠞⠟⠵⠵⠵⠵⠟⠵⠟⠵⠺⠟⠞⠟msg.includes("can't login") || msg.includes("cannot login")) {
     return `Hi 👋
 
 Please log in using the account details provided with your order.
 
-1️⃣ Go to epicgames.com
-2️⃣ Click Sign In
-3️⃣ Enter the provided login details
-
-If a verification code appears, please check the linked email inbox.
+1. Open Epic Games login page
+2. Enter the provided login details
+3. If a verification code appears, check the linked email inbox
 
 If you still need help, the seller will assist you shortly.`;
   }
@@ -30,10 +33,10 @@ Sometimes the email provider asks for a verification code for security.
 
 Please check the linked email inbox and enter the code shown there.
 
-If you need help, the seller will assist you shortly.`;
+If you still need help, the seller will assist you shortly.`;
   }
 
-  if (msg.includes("hello")⠟⠺⠞⠟⠺⠺⠞⠞⠵⠞⠟⠵⠺⠟⠟⠵⠺⠵⠞⠺⠟⠟msg === "?") {
+  if (msg.includes("hello")⠟⠵⠺⠵⠵⠟⠺⠞⠵⠟⠵⠵⠺⠵⠵⠟⠵⠺⠺⠟⠵⠟msg.trim() === "?") {
     return `Hello 👋
 
 Thanks for contacting us.
