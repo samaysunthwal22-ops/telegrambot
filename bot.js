@@ -848,29 +848,6 @@ Amount: $${data?.price || "Unknown"}`
 });
 // ---------- DISCORD LISTENER ----------
 
-const { Client, GatewayIntentBits } = require("discord.js");
-
-const discordClient = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
-
-discordClient.on("messageCreate", (message) => {
-  if (message.author.bot) return;
-
-  const text = `📦 GameBoost Discord Message
-
-${message.content}`;
-
-  sendMessage(text);
-});
-
-discordClient.login(process.env.DISCORD_BOT_TOKEN);
-// ---------- DISCORD LISTENER ----------
-
 function extractOrderIdFromDiscordText(text) {
   if (!text) return null;
 
