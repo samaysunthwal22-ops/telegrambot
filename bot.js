@@ -12,12 +12,60 @@ const CHAT_ID = process.env.CHAT_ID;
 const GAMEBOOST_API_KEY = process.env.GAMEBOOST_API_KEY;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 
-const sessions = {};
+const AUTO_REPLY_TEXT =
+  "❤️ Thanks for buying from us! If you need any help, just message here — I will help you within seconds ❤️";
 
-// ---------- HELPERS ----------
+const sessions = {};
+const autoRepliedOrders = new Set();
+
+// ---------- GENERIC HELPERS ----------
+
+function httpRequest(options, body = null, callback) {
+  const req = https.request(options, (res) => {
+    let data = "";
+    res.on("data", (chunk) => (data += chunk));
+    res.on("end", () => callback(null, res, data));
+  });
+
+  req.on("error", (err) => callback(err, null, null));
+
+  if (body) req.write(body);
+  req.end();
+}
+
+function gbRequest(method, path, payload, callback) {
+  const body = payload ? JSON.stringify(payload) : null;
+
+  const options = {
+    hostname: "api.gameboost.com",
+    path,
+    method,
+    headers: {
+      Authorization: `Bearer ${GAMEBOOST_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+  };
+
+  if (body) {
+    options.headers["Content-Length"] = Buffer.byteLength(body);
+  }
+
+  httpRequest(options, body, (err, res, raw) => {
+    if (err) return callback(err, null, null);
+
+    let parsed;
+    try {
+      parsed = raw ? JSON.parse(raw) : {};
+    } catch {
+      parsed = { raw };
+    }
+
+    callback(null, res, parsed);
+  });
+}
 
 function telegramRequest(method, payload, callback) {
-  const data = JSON.stringify(payload);
+  const body = JSON.stringify(payload);
 
   const options = {
     hostname: "api.telegram.org",
@@ -25,24 +73,11 @@ function telegramRequest(method, payload, callback) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Content-Length": Buffer.byteLength(data),
+      "Content-Length": Buffer.byteLength(body),
     },
   };
 
-  const req = https.request(options, (res) => {
-    let body = "";
-    res.on("data", (chunk) => (body += chunk));
-    res.on("end", () => {
-      if (callback) callback(null, body);
-    });
-  });
-
-  req.on("error", (err) => {
-    if (callback) callback(err, null);
-  });
-
-  req.write(data);
-  req.end();
+  httpRequest(options, body, callback || (() => {}));
 }
 
 function sendMessage(text, chatId = CHAT_ID) {
@@ -59,14 +94,18 @@ function getSession(chatId) {
       raikaStatsText: "",
       photos: [],
       imageUrls: [],
-      email: "",
-      password: "",
+      epicLogin: "",
+      epicPassword: "",
+      emailLogin: "",
+      emailPassword: "",
       pending: null,
       parsed: {},
     };
   }
   return sessions[chatId];
 }
+
+// ---------- RAIKA PARSING ----------
 
 function parseRaikaStats(text) {
   const getNum = (label) => {
@@ -143,14 +182,8 @@ function buildGeneratedTitle(session) {
   const vbucks = extractVBucks(raw);
 
   let title = `${label}💥 ${p.outfits || 0} Skins`;
-
-  if (highlights.length) {
-    title += " | " + highlights.slice(0, 8).join(" | ");
-  }
-
-  if (vbucks > 0) {
-    title += ` | 💰 ${vbucks} VB`;
-  }
+  if (highlights.length) title += " | " + highlights.slice(0, 8).join(" | ");
+  if (vbucks > 0) title += ` | 💰 ${vbucks} VB`;
 
   return title;
 }
@@ -212,7 +245,7 @@ function buildDump(session) {
   return parts.join(" ");
 }
 
-// ---------- TELEGRAM FILE -> IMGBB ----------
+// ---------- SCREENSHOT UPLOAD ----------
 
 function getTelegramFilePath(fileId, callback) {
   const options = {
@@ -221,25 +254,20 @@ function getTelegramFilePath(fileId, callback) {
     method: "GET",
   };
 
-  const req = https.request(options, (res) => {
-    let body = "";
-    res.on("data", (chunk) => (body += chunk));
-    res.on("end", () => {
-      try {
-        const parsed = JSON.parse(body);
-        if (parsed.ok && parsed.result && parsed.result.file_path) {
-          callback(null, parsed.result.file_path);
-        } else {
-          callback(new Error("Could not get Telegram file path"), null);
-        }
-      } catch (err) {
-        callback(err, null);
-      }
-    });
-  });
+  httpRequest(options, null, (err, res, raw) => {
+    if (err) return callback(err, null);
 
-  req.on("error", (err) => callback(err, null));
-  req.end();
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.ok && parsed.result && parsed.result.file_path) {
+        callback(null, parsed.result.file_path);
+      } else {
+        callback(new Error("Could not get Telegram file path"), null);
+      }
+    } catch (e) {
+      callback(e, null);
+    }
+  });
 }
 
 function downloadTelegramFileAsBase64(filePath, callback) {
@@ -251,23 +279,18 @@ function downloadTelegramFileAsBase64(filePath, callback) {
 
   const req = https.request(options, (res) => {
     const chunks = [];
-
-    res.on("data", (chunk) => {
-      chunks.push(chunk);
-    });
-
+    res.on("data", (chunk) => chunks.push(chunk));
     res.on("end", () => {
       try {
-        const buffer = Buffer.concat(chunks);
-        const base64 = buffer.toString("base64");
+        const base64 = Buffer.concat(chunks).toString("base64");
         callback(null, base64);
-      } catch (err) {
-        callback(err, null);
+      } catch (e) {
+        callback(e, null);
       }
     });
   });
 
-  req.on("error", (err) => callback(err, null));
+  req.on("error", (e) => callback(e, null));
   req.end();
 }
 
@@ -287,26 +310,20 @@ function uploadBase64ToImgBB(base64Image, callback) {
     },
   };
 
-  const req = https.request(options, (res) => {
-    let body = "";
-    res.on("data", (chunk) => (body += chunk));
-    res.on("end", () => {
-      try {
-        const parsed = JSON.parse(body);
-        if (parsed && parsed.success && parsed.data && parsed.data.url) {
-          callback(null, parsed.data.url);
-        } else {
-          callback(new Error("ImgBB upload failed"), null);
-        }
-      } catch (err) {
-        callback(err, null);
-      }
-    });
-  });
+  httpRequest(options, postData, (err, res, raw) => {
+    if (err) return callback(err, null);
 
-  req.on("error", (err) => callback(err, null));
-  req.write(postData);
-  req.end();
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.success && parsed.data && parsed.data.url) {
+        callback(null, parsed.data.url);
+      } else {
+        callback(new Error("ImgBB upload failed"), null);
+      }
+    } catch (e) {
+      callback(e, null);
+    }
+  });
 }
 
 function processTelegramPhoto(fileId, chatId, session) {
@@ -318,22 +335,13 @@ function processTelegramPhoto(fileId, chatId, session) {
   sendMessage("🖼 Uploading screenshot...", chatId);
 
   getTelegramFilePath(fileId, (err, filePath) => {
-    if (err) {
-      sendMessage(`❌ Failed to get Telegram file path: ${err.message}`, chatId);
-      return;
-    }
+    if (err) return sendMessage(`❌ Failed to get file path: ${err.message}`, chatId);
 
     downloadTelegramFileAsBase64(filePath, (err2, base64Image) => {
-      if (err2) {
-        sendMessage(`❌ Failed to download Telegram image: ${err2.message}`, chatId);
-        return;
-      }
+      if (err2) return sendMessage(`❌ Failed to download image: ${err2.message}`, chatId);
 
       uploadBase64ToImgBB(base64Image, (err3, imageUrl) => {
-        if (err3) {
-          sendMessage(`❌ ImgBB upload failed: ${err3.message}`, chatId);
-          return;
-        }
+        if (err3) return sendMessage(`❌ ImgBB upload failed: ${err3.message}`, chatId);
 
         session.photos.push(fileId);
         session.imageUrls.push(imageUrl);
@@ -347,7 +355,79 @@ function processTelegramPhoto(fileId, chatId, session) {
   });
 }
 
-// ---------- GAMEBOOST LISTING ----------
+// ---------- GAMEBOOST OFFER + ORDER HELPERS ----------
+
+function listGameBoostOffer(offerId, chatId, callback) {
+  gbRequest("POST", `/v2/account-offers/${offerId}/list`, null, (err, res, parsed) => {
+    if (err) {
+      sendMessage(`❌ Auto-list failed: ${err.message}`, chatId);
+      return callback && callback(err);
+    }
+
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      sendMessage(
+        `🚀 Listing is now LIVE!\n\nOffer ID: ${offerId}`,
+        chatId
+      );
+      return callback && callback(null, parsed);
+    }
+
+    sendMessage(
+      `⚠️ Offer created but listing failed.\n\nOffer ID: ${offerId}\nStatus: ${res.statusCode}\nResponse:\n${JSON.stringify(parsed).slice(0, 1200)}`,
+      chatId
+    );
+    return callback && callback(new Error("list failed"));
+  });
+}
+
+function sendOrderMessage(orderId, message, chatId = CHAT_ID, callback) {
+  gbRequest(
+    "POST",
+    `/v2/account-orders/${orderId}/messages`,
+    { message },
+    (err, res, parsed) => {
+      if (err) {
+        sendMessage(`❌ Reply failed: ${err.message}`, chatId);
+        return callback && callback(err);
+      }
+
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        sendMessage(`✅ Reply sent to order ${orderId}`, chatId);
+        return callback && callback(null, parsed);
+      }
+
+      sendMessage(
+        `❌ Reply failed for order ${orderId}\nStatus: ${res.statusCode}\nResponse:\n${JSON.stringify(parsed).slice(0, 1200)}`,
+        chatId
+      );
+      return callback && callback(new Error("reply failed"));
+    }
+  );
+}
+
+function getOrderMessages(orderId, chatId = CHAT_ID) {
+  gbRequest("GET", `/v2/account-orders/${orderId}/messages`, null, (err, res, parsed) => {
+    if (err) return sendMessage(`❌ Could not fetch messages: ${err.message}`, chatId);
+
+    if (!(res.statusCode >= 200 && res.statusCode < 300)) {
+      return sendMessage(
+        `❌ Could not fetch messages.\nStatus: ${res.statusCode}\nResponse:\n${JSON.stringify(parsed).slice(0, 1200)}`,
+        chatId
+      );
+    }
+
+    const rows = (parsed.data || []).slice(-8).map((m) => {
+      const sender = m?.sender?.username || "unknown";
+      const text = m?.text || "";
+      return `${sender}: ${text}`;
+    });
+
+    sendMessage(
+      rows.length ? `💬 Last messages for order ${orderId}\n\n${rows.join("\n\n")}` : `ℹ️ No messages found for order ${orderId}`,
+      chatId
+    );
+  });
+}
 
 function createGameBoostListing(session, price, chatId) {
   const platform = extractPlatform(session.raikaTitle);
@@ -360,8 +440,15 @@ function createGameBoostListing(session, price, chatId) {
     game: "fortnite",
     title: buildGeneratedTitle(session),
     price: parseFloat(price),
-    login: session.email,
-    password: session.password,
+
+    // Epic credentials
+    login: session.epicLogin,
+    password: session.epicPassword,
+
+    // Email credentials
+    email_login: session.emailLogin,
+    email_password: session.emailPassword,
+
     delivery_time: {
       duration: 5,
       unit: "minutes",
@@ -388,80 +475,42 @@ function createGameBoostListing(session, price, chatId) {
     },
   };
 
-  const data = JSON.stringify(payload);
+  gbRequest("POST", "/v2/account-offers", payload, (err, res, parsed) => {
+    if (err) return sendMessage(`❌ API error: ${err.message}`, chatId);
 
-  const options = {
-    hostname: "api.gameboost.com",
-    path: "/v2/account-offers",
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${GAMEBOOST_API_KEY}`,
-      "Content-Type": "application/json",
-      "Content-Length": Buffer.byteLength(data),
-    },
-  };
+    if (!(res.statusCode >= 200 && res.statusCode < 300)) {
+      return sendMessage(
+        `❌ Listing failed.\nStatus: ${res.statusCode}\nResponse:\n${JSON.stringify(parsed).slice(0, 1500)}`,
+        chatId
+      );
+    }
 
-  const req = https.request(options, (res) => {
-    let body = "";
+    const offerId = parsed?.data?.id || parsed?.id;
 
-    res.on("data", (chunk) => {
-      body += chunk;
-    });
+    if (!offerId) {
+      return sendMessage(
+        `⚠️ Offer created but ID not found.\nResponse:\n${JSON.stringify(parsed).slice(0, 1200)}`,
+        chatId
+      );
+    }
 
-    res.on("end", () => {
-      let parsed;
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        parsed = { raw: body };
-      }
+    sendMessage(
+      `✅ Offer created.\n\nOffer ID: ${offerId}\nNow auto-listing it live...`,
+      chatId
+    );
 
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        sendMessage(
-          `✅ Listing created successfully!
-
-Title:
-${payload.title}
-
-Price: $${price}
-Platform: ${platform}
-Uploaded image URLs: ${session.imageUrls.length}
-
-GameBoost Response:
-${JSON.stringify(parsed).slice(0, 1200)}`,
-          chatId
-        );
-      } else {
-        sendMessage(
-          `❌ Listing failed.
-
-Status: ${res.statusCode}
-Response:
-${JSON.stringify(parsed).slice(0, 1500)}`,
-          chatId
-        );
-      }
-    });
+    listGameBoostOffer(offerId, chatId);
   });
-
-  req.on("error", (err) => {
-    sendMessage(`❌ API error: ${err.message}`, chatId);
-  });
-
-  req.write(data);
-  req.end();
 }
 
-// ---------- TELEGRAM WEBHOOK ----------
+// ---------- TELEGRAM COMMANDS ----------
 
 app.post("/webhooks/telegram", (req, res) => {
   const chatId = req.body.message?.chat?.id;
   const text = req.body.message?.text;
   const photo = req.body.message?.photo;
 
-  if (!chatId) {
-    return res.sendStatus(200);
-  }
+  if (!chatId) return res.sendStatus(200);
 
   const session = getSession(chatId);
 
@@ -471,26 +520,27 @@ app.post("/webhooks/telegram", (req, res) => {
     return res.sendStatus(200);
   }
 
-  if (!text) {
-    return res.sendStatus(200);
-  }
+  if (!text) return res.sendStatus(200);
 
   if (text === "/start") {
     sendMessage(
       `🚀 GameBoost Seller Bot Ready
 
 Workflow:
-1. Send Raika title text
-2. Send Raika stats text
-3. Send Raika screenshots
+1. Send Raika title
+2. Send Raika stats
+3. Send screenshots
 4. /pass
 5. /post
 
 Commands:
 /pass
 /post
+/show
 /reset
-/show`,
+/reply ORDER_ID your message
+/messages ORDER_ID
+/bal`,
       chatId
     );
     return res.sendStatus(200);
@@ -502,8 +552,10 @@ Commands:
       raikaStatsText: "",
       photos: [],
       imageUrls: [],
-      email: "",
-      password: "",
+      epicLogin: "",
+      epicPassword: "",
+      emailLogin: "",
+      emailPassword: "",
       pending: null,
       parsed: {},
     };
@@ -518,16 +570,19 @@ Commands:
 Raika title:
 ${session.raikaTitle || "Not set"}
 
-Email:
-${session.email || "Not set"}
+Epic login:
+${session.epicLogin || "Not set"}
 
-Password:
-${session.password ? "Saved" : "Not set"}
+Epic password:
+${session.epicPassword ? "Saved" : "Not set"}
 
-Photos stored:
-${session.photos.length}
+Email login:
+${session.emailLogin || "Not set"}
 
-Uploaded image URLs:
+Email password:
+${session.emailPassword ? "Saved" : "Not set"}
+
+Uploaded screenshots:
 ${session.imageUrls.length}
 
 Parsed stats:
@@ -537,23 +592,45 @@ ${JSON.stringify(session.parsed, null, 2)}`,
     return res.sendStatus(200);
   }
 
+  if (text === "/bal") {
+    sendMessage(
+      "ℹ️ /bal is not wired yet. I could not verify a public v2 balance endpoint in the current GameBoost docs, so I left this safe for now.",
+      chatId
+    );
+    return res.sendStatus(200);
+  }
+
   if (text === "/pass") {
-    session.pending = "awaiting_email";
-    sendMessage("📧 Please send email/login", chatId);
+    session.pending = "awaiting_epic_login";
+    sendMessage("🎮 Please send Epic login", chatId);
     return res.sendStatus(200);
   }
 
-  if (session.pending === "awaiting_email") {
-    session.email = text.trim();
-    session.pending = "awaiting_password";
-    sendMessage("🔐 Please send password", chatId);
+  if (session.pending === "awaiting_epic_login") {
+    session.epicLogin = text.trim();
+    session.pending = "awaiting_epic_password";
+    sendMessage("🔐 Please send Epic password", chatId);
     return res.sendStatus(200);
   }
 
-  if (session.pending === "awaiting_password") {
-    session.password = text.trim();
+  if (session.pending === "awaiting_epic_password") {
+    session.epicPassword = text.trim();
+    session.pending = "awaiting_email_login";
+    sendMessage("📧 Please send email login", chatId);
+    return res.sendStatus(200);
+  }
+
+  if (session.pending === "awaiting_email_login") {
+    session.emailLogin = text.trim();
+    session.pending = "awaiting_email_password";
+    sendMessage("📨 Please send email password", chatId);
+    return res.sendStatus(200);
+  }
+
+  if (session.pending === "awaiting_email_password") {
+    session.emailPassword = text.trim();
     session.pending = null;
-    sendMessage("✅ Email and password saved.", chatId);
+    sendMessage("✅ Epic + email credentials saved.", chatId);
     return res.sendStatus(200);
   }
 
@@ -562,10 +639,12 @@ ${JSON.stringify(session.parsed, null, 2)}`,
       sendMessage("❌ First send Raika stats text.", chatId);
       return res.sendStatus(200);
     }
-    if (!session.email || !session.password) {
-      sendMessage("❌ First use /pass and save email/password.", chatId);
+
+    if (!session.epicLogin || !session.epicPassword || !session.emailLogin || !session.emailPassword) {
+      sendMessage("❌ First use /pass and save all credentials.", chatId);
       return res.sendStatus(200);
     }
+
     session.pending = "awaiting_price";
     sendMessage("💰 Please tell the price", chatId);
     return res.sendStatus(200);
@@ -585,15 +664,47 @@ ${JSON.stringify(session.parsed, null, 2)}`,
     return res.sendStatus(200);
   }
 
-  if (text.startsWith("[PC]") || text.startsWith("[Xbox]") || text.startsWith("[PlayStation]")) {
+  if (text.startsWith("/reply ")) {
+    const parts = text.split(" ");
+    if (parts.length < 3) {
+      sendMessage("❌ Usage: /reply ORDER_ID your message", chatId);
+      return res.sendStatus(200);
+    }
+
+    const orderId = parts[1];
+    const message = text.split(" ").slice(2).join(" ");
+    sendOrderMessage(orderId, message, chatId);
+    return res.sendStatus(200);
+  }
+
+  if (text.startsWith("/messages ")) {
+    const orderId = text.split(" ")[1];
+    if (!orderId) {
+      sendMessage("❌ Usage: /messages ORDER_ID", chatId);
+      return res.sendStatus(200);
+    }
+    getOrderMessages(orderId, chatId);
+    return res.sendStatus(200);
+  }
+
+  if (
+    text.startsWith("[PC]") ||
+    text.startsWith("[Xbox]") ||
+    text.startsWith("[PlayStation]")
+  ) {
     session.raikaTitle = text.trim();
     sendMessage("🏷 Raika title saved.", chatId);
     return res.sendStatus(200);
   }
 
-  if (text.includes("Outfits:") && text.includes("Backpacks:") && text.includes("Pickaxes:")) {
+  if (
+    text.includes("Outfits:") &&
+    text.includes("Backpacks:") &&
+    text.includes("Pickaxes:")
+  ) {
     session.raikaStatsText = text;
     session.parsed = parseRaikaStats(text);
+
     sendMessage(
       `📊 Raika stats saved.
 
@@ -613,40 +724,65 @@ Account Level: ${session.parsed.accountLevel}`,
     return res.sendStatus(200);
   }
 
-  sendMessage("ℹ️ I saved nothing from that message. Send Raika title, Raika stats, screenshots, /pass, or /post.", chatId);
+  sendMessage(
+    "ℹ️ I saved nothing from that message. Send Raika title, Raika stats, screenshots, /pass, /post, /reply, or /messages.",
+    chatId
+  );
   return res.sendStatus(200);
 });
 
 // ---------- GAMEBOOST WEBHOOK ----------
 
 app.post("/webhooks/gameboost", (req, res) => {
-  const event = req.body;
+  const event = req.body || {};
+  const type = event.type || "";
+  const data = event.data || {};
 
-  let message = "📦 GameBoost Event";
+  const orderId =
+    data.id ||
+    data.order_id ||
+    data.account_order_id ||
+    data.accountOrderId;
 
-  if (event.type === "order.created") {
-    message = `🛒 NEW ORDER
+  if (type === "order.created") {
+    sendMessage(
+      `🛒 NEW ORDER
 
-Buyer: ${event?.data?.buyer_username || "Unknown"}
-Product: ${event?.data?.title || "Unknown"}
-Price: $${event?.data?.price || "Unknown"}`;
+Order ID: ${orderId || "Unknown"}
+Buyer: ${data?.buyer_username || data?.buyer?.username || "Unknown"}
+Product: ${data?.title || "Unknown"}
+Price: $${data?.price || "Unknown"}`
+    );
+
+    if (orderId && !autoRepliedOrders.has(String(orderId))) {
+      autoRepliedOrders.add(String(orderId));
+      sendOrderMessage(String(orderId), AUTO_REPLY_TEXT);
+    }
+  } else if (type === "message.created") {
+    sendMessage(
+      `💬 BUYER MESSAGE
+
+Order ID: ${orderId || "Unknown"}
+From: ${data?.sender?.username || data?.sender || "Unknown"}
+Message: ${data?.message || data?.text || "No message text"}`
+    );
+
+    if (orderId && !autoRepliedOrders.has(String(orderId))) {
+      autoRepliedOrders.add(String(orderId));
+      sendOrderMessage(String(orderId), AUTO_REPLY_TEXT);
+    }
+  } else if (type === "order.completed") {
+    sendMessage(
+      `💰 ORDER COMPLETED
+
+Order ID: ${orderId || "Unknown"}
+Product: ${data?.title || "Unknown"}
+Amount: $${data?.price || "Unknown"}`
+    );
+  } else {
+    sendMessage(`📦 GameBoost Event\nType: ${type || "unknown"}`);
   }
 
-  if (event.type === "message.created") {
-    message = `💬 BUYER MESSAGE
-
-From: ${event?.data?.sender || "Unknown"}
-Message: ${event?.data?.message || "No message text"}`;
-  }
-
-  if (event.type === "order.completed") {
-    message = `💰 ORDER COMPLETED
-
-Product: ${event?.data?.title || "Unknown"}
-Amount: $${event?.data?.price || "Unknown"}`;
-  }
-
-  sendMessage(message);
   res.sendStatus(200);
 });
 
