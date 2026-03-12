@@ -7,19 +7,19 @@ function isEscalationMessage(message) {
     "not working",
     "doesn't work",
     "does not work",
-    "ban",
     "banned",
+    "ban",
     "locked",
     "wrong account",
-    "chargeback",
     "fake",
     "fraud",
     "problem",
     "issue",
-    "angry"
+    "angry",
+    "chargeback"
   ];
 
-  return triggers.some(word => msg.includes(word));
+  return triggers.some((word) => msg.includes(word));
 }
 
 module.exports = { isEscalationMessage };
