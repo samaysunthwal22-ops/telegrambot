@@ -734,7 +734,7 @@ Account Level: ${session.parsed.accountLevel}`,
 // ---------- GAMEBOOST WEBHOOK ----------
 
 app.post("/webhooks/gameboost", (req, res) => {
-  sendMessage("RAW:\n" + JSON.stringify(req.body));
+  sendMessage("RAW:\n" + JSON.stringify(req.body).slice(0, 3500));
   const event = req.body || {};
   const type = event.type || "";
   const data = event.data || {};
