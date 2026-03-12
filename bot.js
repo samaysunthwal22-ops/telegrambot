@@ -1,5 +1,3 @@
-const { Client, GatewayIntentBits } = require("discord.js");
-
 const { aiSupportReply } = require("./aiSupport");
 const { isEscalationMessage } = require("./escalation");
 const { activeConversations } = require("./convoManager");
