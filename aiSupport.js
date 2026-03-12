@@ -5,16 +5,21 @@ function aiSupportReply(orderId, message) {
     msg.includes("screenshot") ||
     msg.includes("screenshots") ||
     msg.includes("skins") ||
-    msg.includes("items included")
+    msg.includes("items")
   ) {
     return `Yes 👍
 
 All skins and items included are visible in the screenshots provided in the listing.
 
-If you need any additional screenshots, just let me know.`;
+If you need additional screenshots, let me know.`;
   }
 
-  if (msg.includes("login")⠞⠞⠵⠵⠺⠵⠺⠟⠺⠞⠟⠺⠞⠟⠵⠵⠵⠵⠟⠵⠟⠵⠺⠟⠞⠟msg.includes("can't login") || msg.includes("cannot login")) {
+  if (
+    msg.includes("login") ||
+    msg.includes("log in") ||
+    msg.includes("can't login") ||
+    msg.includes("cannot login")
+  ) {
     return `Hi 👋
 
 Please log in using the account details provided with your order.
@@ -29,14 +34,12 @@ If you still need help, the seller will assist you shortly.`;
   if (msg.includes("code") || msg.includes("verification")) {
     return `That is normal.
 
-Sometimes the email provider asks for a verification code for security.
+Sometimes the email provider asks for a verification code.
 
-Please check the linked email inbox and enter the code shown there.
-
-If you still need help, the seller will assist you shortly.`;
+Please check the linked email inbox and enter the code shown there.`;
   }
 
-  if (msg.includes("hello")⠟⠵⠺⠵⠵⠟⠺⠞⠵⠟⠵⠵⠺⠵⠵⠟⠵⠺⠺⠟⠵⠟msg.trim() === "?") {
+  if (msg.includes("hello") || msg.includes("hi")) {
     return `Hello 👋
 
 Thanks for contacting us.
