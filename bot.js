@@ -892,12 +892,20 @@ discordClient.on("ready", () => {
 
 discordClient.on("messageCreate", (message) => {
 
-  if (message.author.bot) return;
+  
   if (DISCORD_CHANNEL_ID && message.channel.id !== DISCORD_CHANNEL_ID) return;
 
-  const content = message.content || "";
+ let content = message.content || "";
 
-  if (!content) return;
+if (!content && message.embeds && message.embeds.length > 0) {
+  const embed = message.embeds[0];
+  content = [
+    embed.title || "",
+    embed.description || ""
+  ].filter(Boolean).join("\n");
+}
+
+if (!content) return;
 
   sendMessage(`📦 GameBoost Discord Update
 
