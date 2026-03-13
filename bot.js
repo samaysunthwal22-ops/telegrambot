@@ -540,20 +540,22 @@ app.post("/webhooks/telegram", (req, res) => {
     return res.sendStatus(200);
   }
 
-  if (!chatId) return res.sendStatus(200);
 
   const session = getSession(chatId);
+  if (!session.raikaTitle && !session.awaiting) {
+  session.awaiting = "raika_title";
+}
   // Save Raika title
 if (
   text &&
-  !text.startsWith("/") &&
-  !text.includes(":")
+  session.awaiting === "raika_title" &&
+  !text.startsWith("/")
 ) {
   session.raikaTitle = text.trim();
+  session.awaiting = null;
   sendMessage("🏷️ Raika title saved.", chatId);
   return res.sendStatus(200);
 }
-
   if (photo && photo.length) {
   const largest = photo[photo.length - 1];
   const messageId = req.body.message?.message_id || 0;
