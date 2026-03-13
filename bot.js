@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits } = require("discord.js");
 const { aiSupportReply } = require("./aiSupport");
 const { isEscalationMessage } = require("./escalation");
 const { activeConversations } = require("./convoManager");
+const OWNER_ID = 6006918217;
 const {
   disableAI,
   escalate,
@@ -343,7 +344,7 @@ function uploadBase64ToImgBB(base64Image, callback) {
   });
 }
 
-function processTelegramPhoto(fileId, chatId, session) {
+function processTelegramPhoto(fileId, chatId, session, messageId = 0) {
   if (!IMGBB_API_KEY) {
     sendMessage("❌ Missing IMGBB_API_KEY in Render environment.", chatId);
     return;
@@ -360,8 +361,14 @@ function processTelegramPhoto(fileId, chatId, session) {
       uploadBase64ToImgBB(base64Image, (err3, imageUrl) => {
         if (err3) return sendMessage(`❌ ImgBB upload failed: ${err3.message}`, chatId);
 
-        session.photos.push(fileId);
-        session.imageUrls.push(imageUrl);
+      session.photos.push({
+  fileId,
+  imageUrl,
+  messageId
+});
+
+session.photos.sort((a, b) => a.messageId - b.messageId);
+session.imageUrls = session.photos.map((p) => p.imageUrl);
 
         sendMessage(
           `✅ Screenshot uploaded.\nStored screenshots: ${session.imageUrls.length}`,
@@ -455,7 +462,7 @@ function createGameBoostListing(session, price, chatId) {
 
   const payload = {
     game: "fortnite",
-    title: buildGeneratedTitle(session),
+   title: session.raikaTitle.trim(),
     price: parseFloat(price),
 
     // Epic credentials
@@ -529,14 +536,20 @@ app.post("/webhooks/telegram", (req, res) => {
 
   if (!chatId) return res.sendStatus(200);
 
-  const session = getSession(chatId);
-
-  if (photo && photo.length) {
-    const largest = photo[photo.length - 1];
-    processTelegramPhoto(largest.file_id, chatId, session);
+  if (String(chatId) !== String(OWNER_ID)) {
     return res.sendStatus(200);
   }
 
+  if (!chatId) return res.sendStatus(200);
+
+  const session = getSession(chatId);
+
+  if (photo && photo.length) {
+  const largest = photo[photo.length - 1];
+  const messageId = req.body.message?.message_id || 0;
+  processTelegramPhoto(largest.file_id, chatId, session, messageId);
+  return res.sendStatus(200);
+}
   if (!text) return res.sendStatus(200);
   // Conversation mode
 if (activeConversations[chatId] && !text.startsWith("/")) {
