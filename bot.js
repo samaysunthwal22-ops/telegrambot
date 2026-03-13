@@ -543,6 +543,16 @@ app.post("/webhooks/telegram", (req, res) => {
   if (!chatId) return res.sendStatus(200);
 
   const session = getSession(chatId);
+  // Save Raika title
+if (
+  text &&
+  !text.startsWith("/") &&
+  !text.includes(":")
+) {
+  session.raikaTitle = text.trim();
+  sendMessage("🏷️ Raika title saved.", chatId);
+  return res.sendStatus(200);
+}
 
   if (photo && photo.length) {
   const largest = photo[photo.length - 1];
